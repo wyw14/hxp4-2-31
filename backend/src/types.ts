@@ -17,6 +17,12 @@ export interface HexCell {
   nutrientId?: string;
 }
 
+export interface GameRules {
+  allowDiagonalJump: boolean;
+  allowPurifyPollution: boolean;
+  enableStepBudget: boolean;
+}
+
 export interface GameState {
   id: string;
   level: number;
@@ -31,11 +37,16 @@ export interface GameState {
   status: 'playing' | 'won' | 'lost';
   createdAt: number;
   updatedAt: number;
+  rules: GameRules;
+  diagonalJumpUsed: boolean;
+  purifyUsed: boolean;
+  stepBudget: number;
 }
 
 export interface CreateGameRequest {
   level?: number;
   gridRadius?: number;
+  rules?: Partial<GameRules>;
 }
 
 export interface ExtendMyceliumRequest {

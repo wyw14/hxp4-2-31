@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { GameState, HexCoord, ApiResponse } from './types';
+import { GameState, HexCoord, ApiResponse, GameRules } from './types';
 
 const API_BASE = '/api';
 
@@ -8,8 +8,8 @@ const api = axios.create({
   timeout: 5000,
 });
 
-export async function createGame(level: number = 1, gridRadius?: number): Promise<GameState> {
-  const response = await api.post<ApiResponse<GameState>>('/games', { level, gridRadius });
+export async function createGame(level: number = 1, gridRadius?: number, rules?: Partial<GameRules>): Promise<GameState> {
+  const response = await api.post<ApiResponse<GameState>>('/games', { level, gridRadius, rules });
   if (!response.data.success || !response.data.data) {
     throw new Error(response.data.error || '创建游戏失败');
   }
@@ -56,4 +56,20 @@ export async function findPath(id: string, from: HexCoord, to: HexCoord): Promis
   } catch {
     return null;
   }
+}
+
+export async function purifyPollution(id: string, coord: HexCoord): Promise<GameState> {
+  const response = await api.post<ApiResponse<GameState>>(`/games/${id}/purify`, { coord });
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error || '净化污染失败');
+  }
+  return response.data.data;
+}
+
+export async function diagonalJump(id: string, coord: HexCoord): Promise<GameState> {
+  const response = await api.post<ApiResponse<GameState>>(`/games/${id}/diagonal-jump`, { coord });
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error || '斜向跳孢失败');
+  }
+  return response.data.data;
 }

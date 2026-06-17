@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { CreateGameRequest, ExtendMyceliumRequest, ApiResponse, HexCoord } from './types';
-import { createNewGame, extendMycelium, undoLastMove, findAutoPath } from './gameLogic';
+import { CreateGameRequest, ExtendMyceliumRequest, ApiResponse, HexCoord, GameState } from './types';
+import { createNewGame, extendMycelium, undoLastMove, findAutoPath, purifyPollution, diagonalJump } from './gameLogic';
 import { saveGame, loadGame, deleteGame, listGames } from './db';
 import { coordKey } from './hexUtils';
 
@@ -8,8 +8,8 @@ const router = Router();
 
 router.post('/games', (req, res) => {
   try {
-    const { level = 1, gridRadius } = req.body as CreateGameRequest;
-    const game = createNewGame(level, gridRadius);
+    const { level = 1, gridRadius, rules } = req.body as CreateGameRequest;
+    const game = createNewGame(level, gridRadius, rules);
     saveGame(game);
 
     const response: ApiResponse<typeof game> = {
@@ -29,16 +29,17 @@ router.post('/games', (req, res) => {
 router.get('/games', (req, res) => {
   try {
     const games = listGames();
-    const response: ApiResponse<typeof games> = {
+    const gameSummaries = games.map((g) => ({
+      id: g.id,
+      level: g.level,
+      status: g.status,
+      steps: g.steps,
+      optimalSteps: g.optimalSteps,
+      updatedAt: g.updatedAt,
+    }));
+    const response: ApiResponse<typeof gameSummaries> = {
       success: true,
-      data: games.map((g) => ({
-        id: g.id,
-        level: g.level,
-        status: g.status,
-        steps: g.steps,
-        optimalSteps: g.optimalSteps,
-        updatedAt: g.updatedAt,
-      })),
+      data: gameSummaries,
     };
     res.json(response);
   } catch (error) {
@@ -85,9 +86,9 @@ router.post('/games/:id/extend', (req, res) => {
     const result = extendMycelium(game, coord);
     saveGame(result.game);
 
-    const response: ApiResponse = {
+    const response: ApiResponse<GameState> = {
       success: result.success,
-      data: result.game,
+      data: result.success ? result.game : undefined,
       error: result.success ? undefined : result.message,
     };
     res.json(response);
@@ -111,9 +112,9 @@ router.post('/games/:id/undo', (req, res) => {
     const result = undoLastMove(game);
     saveGame(result.game);
 
-    const response: ApiResponse = {
+    const response: ApiResponse<GameState> = {
       success: result.success,
-      data: result.game,
+      data: result.success ? result.game : undefined,
       error: result.success ? undefined : result.message,
     };
     res.json(response);
@@ -134,10 +135,11 @@ router.post('/games/:id/reset', (req, res) => {
       return res.status(404).json(response);
     }
 
-    const newGame = createNewGame(game.level, game.gridRadius);
-    saveGame({ ...newGame, id: game.id, createdAt: game.createdAt });
+    const newGame = createNewGame(game.level, game.gridRadius, game.rules);
+    const gameWithId = { ...newGame, id: game.id };
+    saveGame({ ...gameWithId, createdAt: game.createdAt });
 
-    const response: ApiResponse = { success: true, data: { ...newGame, id: game.id } };
+    const response: ApiResponse<GameState> = { success: true, data: gameWithId };
     res.json(response);
   } catch (error) {
     const response: ApiResponse = {
@@ -180,7 +182,7 @@ router.post('/games/:id/find-path', (req, res) => {
     }
 
     const path = findAutoPath(game, from, to);
-    const response: ApiResponse = {
+    const response: ApiResponse<HexCoord[]> = {
       success: path !== null,
       data: path || undefined,
       error: path === null ? '找不到可行路径' : undefined,
@@ -190,6 +192,70 @@ router.post('/games/:id/find-path', (req, res) => {
     const response: ApiResponse = {
       success: false,
       error: error instanceof Error ? error.message : '寻路失败',
+    };
+    res.status(500).json(response);
+  }
+});
+
+router.post('/games/:id/purify', (req, res) => {
+  try {
+    const { coord } = req.body as ExtendMyceliumRequest;
+    if (!coord || typeof coord.q !== 'number' || typeof coord.r !== 'number') {
+      const response: ApiResponse = { success: false, error: '坐标参数无效' };
+      return res.status(400).json(response);
+    }
+
+    const game = loadGame(req.params.id);
+    if (!game) {
+      const response: ApiResponse = { success: false, error: '游戏不存在' };
+      return res.status(404).json(response);
+    }
+
+    const result = purifyPollution(game, coord);
+    saveGame(result.game);
+
+    const response: ApiResponse<GameState> = {
+      success: result.success,
+      data: result.success ? result.game : undefined,
+      error: result.success ? undefined : result.message,
+    };
+    res.json(response);
+  } catch (error) {
+    const response: ApiResponse = {
+      success: false,
+      error: error instanceof Error ? error.message : '净化污染失败',
+    };
+    res.status(500).json(response);
+  }
+});
+
+router.post('/games/:id/diagonal-jump', (req, res) => {
+  try {
+    const { coord } = req.body as ExtendMyceliumRequest;
+    if (!coord || typeof coord.q !== 'number' || typeof coord.r !== 'number') {
+      const response: ApiResponse = { success: false, error: '坐标参数无效' };
+      return res.status(400).json(response);
+    }
+
+    const game = loadGame(req.params.id);
+    if (!game) {
+      const response: ApiResponse = { success: false, error: '游戏不存在' };
+      return res.status(404).json(response);
+    }
+
+    const result = diagonalJump(game, coord);
+    saveGame(result.game);
+
+    const response: ApiResponse<GameState> = {
+      success: result.success,
+      data: result.success ? result.game : undefined,
+      error: result.success ? undefined : result.message,
+    };
+    res.json(response);
+  } catch (error) {
+    const response: ApiResponse = {
+      success: false,
+      error: error instanceof Error ? error.message : '斜向跳孢失败',
     };
     res.status(500).json(response);
   }

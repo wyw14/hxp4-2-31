@@ -1,6 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
-import { GameState, HexCell, HexCoord, HexType } from './types';
+import { GameState, HexCell, HexCoord, HexType, GameRules } from './types';
 import { coordKey, generateHexGrid, hexDistance, getNeighbors, isInRadius, findPathAStar } from './hexUtils';
+
+const DEFAULT_RULES: GameRules = {
+  allowDiagonalJump: false,
+  allowPurifyPollution: false,
+  enableStepBudget: false,
+};
 
 const LEVEL_CONFIGS: Record<number, { radius: number; nutrients: number; polluted: number }> = {
   1: { radius: 3, nutrients: 2, polluted: 3 },
@@ -23,9 +29,10 @@ function shuffle<T>(arr: T[]): T[] {
   return result;
 }
 
-export function createNewGame(level: number = 1, customRadius?: number): GameState {
+export function createNewGame(level: number = 1, customRadius?: number, customRules?: Partial<GameRules>): GameState {
   const config = LEVEL_CONFIGS[level] || LEVEL_CONFIGS[5];
   const radius = customRadius ?? config.radius;
+  const rules: GameRules = { ...DEFAULT_RULES, ...customRules };
 
   const allCoords = generateHexGrid(radius);
   const cells: Record<string, HexCell> = {};
@@ -67,6 +74,8 @@ export function createNewGame(level: number = 1, customRadius?: number): GameSta
 
   const optimalSteps = calculateOptimalSteps(cells, startCoord, radius, nutrients);
 
+  const stepBudget = rules.enableStepBudget ? Math.floor(optimalSteps * 1.5) : 0;
+
   return {
     id: uuidv4(),
     level,
@@ -81,6 +90,10 @@ export function createNewGame(level: number = 1, customRadius?: number): GameSta
     status: 'playing',
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    rules,
+    diagonalJumpUsed: false,
+    purifyUsed: false,
+    stepBudget,
   };
 }
 
@@ -145,6 +158,10 @@ export function extendMycelium(game: GameState, coord: HexCoord): { game: GameSt
     return { game, success: false, message: '游戏已结束' };
   }
 
+  if (game.rules.enableStepBudget && game.steps >= game.stepBudget) {
+    return { game, success: false, message: '步数预算已用完！' };
+  }
+
   const key = coordKey(coord);
   const cell = game.cells[key];
 
@@ -157,6 +174,9 @@ export function extendMycelium(game: GameState, coord: HexCoord): { game: GameSt
   }
 
   if (cell.type === HexType.POLLUTED) {
+    if (game.rules.allowPurifyPollution && !game.purifyUsed) {
+      return { game, success: false, message: '点击污染区可使用净化能力' };
+    }
     return { game, success: false, message: '不能蔓延到重金属污染区！' };
   }
 
@@ -194,7 +214,129 @@ export function extendMycelium(game: GameState, coord: HexCoord): { game: GameSt
     return { game: newGame, success: true, message: '恭喜！你成功连接了所有营养源！' };
   }
 
+  if (newGame.rules.enableStepBudget && newGame.steps >= newGame.stepBudget && newGame.status === 'playing') {
+    newGame.status = 'lost';
+    return { game: newGame, success: true, message: '步数预算已用完，游戏结束！' };
+  }
+
   return { game: newGame, success: true, message: '菌丝成功蔓延' };
+}
+
+export function purifyPollution(game: GameState, coord: HexCoord): { game: GameState; success: boolean; message: string } {
+  if (game.status !== 'playing') {
+    return { game, success: false, message: '游戏已结束' };
+  }
+
+  if (!game.rules.allowPurifyPollution) {
+    return { game, success: false, message: '净化污染功能未启用' };
+  }
+
+  if (game.purifyUsed) {
+    return { game, success: false, message: '净化能力已使用过' };
+  }
+
+  const key = coordKey(coord);
+  const cell = game.cells[key];
+
+  if (!cell) {
+    return { game, success: false, message: '坐标无效' };
+  }
+
+  if (cell.type !== HexType.POLLUTED) {
+    return { game, success: false, message: '该格子不是污染区' };
+  }
+
+  const myceliumKeys = new Set(game.myceliumCells.map(coordKey));
+  const neighbors = getNeighbors(coord);
+  const hasAdjacentMycelium = neighbors.some((n) => myceliumKeys.has(coordKey(n)));
+
+  if (!hasAdjacentMycelium) {
+    return { game, success: false, message: '只能净化相邻的污染区！' };
+  }
+
+  const newGame: GameState = {
+    ...game,
+    cells: { ...game.cells },
+    purifyUsed: true,
+    updatedAt: Date.now(),
+  };
+
+  newGame.cells[key] = { ...cell, type: HexType.EMPTY };
+
+  return { game: newGame, success: true, message: '成功净化污染区！' };
+}
+
+export function diagonalJump(game: GameState, coord: HexCoord): { game: GameState; success: boolean; message: string } {
+  if (game.status !== 'playing') {
+    return { game, success: false, message: '游戏已结束' };
+  }
+
+  if (!game.rules.allowDiagonalJump) {
+    return { game, success: false, message: '斜向跳孢功能未启用' };
+  }
+
+  if (game.diagonalJumpUsed) {
+    return { game, success: false, message: '斜向跳孢能力已使用过' };
+  }
+
+  if (game.rules.enableStepBudget && game.steps >= game.stepBudget) {
+    return { game, success: false, message: '步数预算已用完！' };
+  }
+
+  const key = coordKey(coord);
+  const cell = game.cells[key];
+
+  if (!cell) {
+    return { game, success: false, message: '坐标无效' };
+  }
+
+  if (!isInRadius(coord, game.gridRadius)) {
+    return { game, success: false, message: '超出地图范围' };
+  }
+
+  if (cell.type === HexType.POLLUTED) {
+    return { game, success: false, message: '不能跳孢到重金属污染区！' };
+  }
+
+  const myceliumKeys = new Set(game.myceliumCells.map(coordKey));
+  if (myceliumKeys.has(key)) {
+    return { game, success: false, message: '该位置已被菌丝覆盖' };
+  }
+
+  const distance = hexDistance(game.myceliumCells[game.myceliumCells.length - 1], coord);
+  if (distance !== 2) {
+    return { game, success: false, message: '斜向跳孢只能跳2格距离！' };
+  }
+
+  const newGame: GameState = {
+    ...game,
+    cells: { ...game.cells },
+    myceliumCells: [...game.myceliumCells, coord],
+    connectedNutrients: [...game.connectedNutrients],
+    steps: game.steps + 1,
+    diagonalJumpUsed: true,
+    updatedAt: Date.now(),
+  };
+
+  if (cell.type !== HexType.START) {
+    newGame.cells[key] = { ...cell, type: HexType.MYCELIUM };
+  }
+
+  if (cell.nutrientId && !newGame.connectedNutrients.includes(cell.nutrientId)) {
+    newGame.connectedNutrients.push(cell.nutrientId);
+  }
+
+  if (newGame.connectedNutrients.length === newGame.nutrients.length) {
+    newGame.status = 'won';
+    return { game: newGame, success: true, message: '恭喜！你成功连接了所有营养源！' };
+  }
+
+  if (newGame.rules.enableStepBudget && newGame.steps >= newGame.stepBudget && newGame.status === 'playing') {
+    newGame.status = 'lost';
+    return { game: newGame, success: true, message: '步数预算已用完，游戏结束！' };
+  }
+
+  return { game: newGame, success: true, message: '斜向跳孢成功！' };
 }
 
 export function undoLastMove(game: GameState): { game: GameState; success: boolean; message: string } {

@@ -53,6 +53,16 @@ export class HexGridRenderer {
     this.render();
   }
 
+  clear(): void {
+    this.gameState = null;
+    this.reachableKeys.clear();
+    this.cellGroups.clear();
+    this.pathPreviewGroup = null;
+    while (this.svg.firstChild) {
+      this.svg.removeChild(this.svg.firstChild);
+    }
+  }
+
   private updateReachable(): void {
     this.reachableKeys.clear();
     if (!this.gameState) return;

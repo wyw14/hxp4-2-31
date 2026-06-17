@@ -220,6 +220,143 @@ body {
   border-color: transparent;
 }
 
+.rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.rule-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  transition: all 0.2s;
+}
+
+.rule-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.rule-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rule-icon {
+  font-size: 20px;
+}
+
+.rule-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.rule-desc {
+  font-size: 11px;
+  color: #8a8a9a;
+  margin-top: 2px;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  transition: 0.3s;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 2px;
+  bottom: 2px;
+  background: #8a8a9a;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: linear-gradient(135deg, #7ed957, #5fa8d3);
+  border-color: transparent;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(20px);
+  background: #1a1a2e;
+}
+
+.btn-full {
+  width: 100%;
+}
+
+.abilities {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.ability-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.ability-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(126, 217, 87, 0.5);
+}
+
+.ability-btn.active {
+  background: rgba(126, 217, 87, 0.15);
+  border-color: #7ed957;
+  color: #7ed957;
+}
+
+.ability-btn.used {
+  opacity: 0.5;
+}
+
+.ability-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .legend {
   display: flex;
   flex-direction: column;

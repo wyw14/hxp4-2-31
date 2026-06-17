@@ -1,8 +1,8 @@
 import './styles.css';
-import { GameState, HexCoord, HexType } from './types';
+import { GameState, HexCoord, HexType, GameRules } from './types';
 import { HexGridRenderer } from './hexGrid';
-import { createGame, getGame, extendMycelium, undoMove, resetGame, findPath } from './api';
-import { coordKey, findPathAStar, PixelCoord } from './hexUtils';
+import { createGame, getGame, extendMycelium, undoMove, resetGame, findPath, purifyPollution, diagonalJump } from './api';
+import { coordKey, findPathAStar, PixelCoord, hexDistance } from './hexUtils';
 
 type MessageType = 'info' | 'success' | 'error';
 
@@ -21,6 +21,12 @@ export class FungiGame {
   private messageTimeout: any = null;
   private isProcessing = false;
   private previewPathCoord: HexCoord | null = null;
+  private gameRules: GameRules = {
+    allowDiagonalJump: false,
+    allowPurifyPollution: false,
+    enableStepBudget: false,
+  };
+  private abilityMode: 'none' | 'purify' | 'diagonalJump' = 'none';
 
   constructor() {
     const hexContainer = document.getElementById('hex-container')!;
@@ -40,7 +46,6 @@ export class FungiGame {
 
   private initUI(): void {
     this.renderPanel();
-    this.startNewGame(this.selectedLevel);
   }
 
   private renderPanel(): void {
@@ -58,6 +63,11 @@ export class FungiGame {
     const levelSection = this.createLevelSection();
     this.ui.panelContainer.appendChild(levelSection);
 
+    if (!this.gameState) {
+      const rulesSection = this.createRulesSection();
+      this.ui.panelContainer.appendChild(rulesSection);
+    }
+
     if (this.message) {
       const msgBox = document.createElement('div');
       msgBox.className = `message-box message-${this.message.type}`;
@@ -68,6 +78,9 @@ export class FungiGame {
     if (this.gameState) {
       const statsSection = this.createStatsSection();
       this.ui.panelContainer.appendChild(statsSection);
+
+      const abilitiesSection = this.createAbilitiesSection();
+      this.ui.panelContainer.appendChild(abilitiesSection);
 
       const controlsSection = this.createControlsSection();
       this.ui.panelContainer.appendChild(controlsSection);
@@ -103,6 +116,127 @@ export class FungiGame {
     return section;
   }
 
+  private createRulesSection(): HTMLElement {
+    const section = document.createElement('div');
+    section.innerHTML = `<div class="section-title">规则实验</div>`;
+
+    const rulesList = document.createElement('div');
+    rulesList.className = 'rules-list';
+
+    const rules = [
+      {
+        key: 'allowDiagonalJump',
+        label: '斜向跳孢',
+        desc: '允许一次跳过2格距离',
+        icon: '🦘',
+      },
+      {
+        key: 'allowPurifyPollution',
+        label: '净化污染',
+        desc: '允许一次净化相邻污染区',
+        icon: '✨',
+      },
+      {
+        key: 'enableStepBudget',
+        label: '步数预算',
+        desc: '限定步数内完成挑战',
+        icon: '⏱️',
+      },
+    ];
+
+    for (const rule of rules) {
+      const ruleItem = document.createElement('div');
+      ruleItem.className = 'rule-item';
+
+      const isEnabled = this.gameRules[rule.key as keyof GameRules];
+
+      ruleItem.innerHTML = `
+        <div class="rule-info">
+          <span class="rule-icon">${rule.icon}</span>
+          <div>
+            <div class="rule-label">${rule.label}</div>
+            <div class="rule-desc">${rule.desc}</div>
+          </div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" ${isEnabled ? 'checked' : ''} data-rule="${rule.key}">
+          <span class="toggle-slider"></span>
+        </label>
+      `;
+
+      const checkbox = ruleItem.querySelector('input')!;
+      checkbox.onchange = (e) => {
+        const target = e.target as HTMLInputElement;
+        const ruleKey = target.dataset.rule as keyof GameRules;
+        this.gameRules[ruleKey] = target.checked;
+      };
+
+      rulesList.appendChild(ruleItem);
+    }
+
+    section.appendChild(rulesList);
+
+    const startBtn = document.createElement('button');
+    startBtn.className = 'btn btn-primary btn-full';
+    startBtn.innerHTML = '🎮 开始游戏';
+    startBtn.style.marginTop = '12px';
+    startBtn.onclick = () => {
+      this.startNewGame(this.selectedLevel);
+    };
+    section.appendChild(startBtn);
+
+    return section;
+  }
+
+  private createAbilitiesSection(): HTMLElement {
+    const section = document.createElement('div');
+
+    const hasAnyAbility = this.gameState!.rules.allowDiagonalJump || this.gameState!.rules.allowPurifyPollution;
+    if (!hasAnyAbility) return section;
+
+    section.innerHTML = `<div class="section-title">特殊能力</div>`;
+
+    const abilities = document.createElement('div');
+    abilities.className = 'abilities';
+
+    if (this.gameState!.rules.allowDiagonalJump) {
+      const btn = document.createElement('button');
+      const used = this.gameState!.diagonalJumpUsed;
+      btn.className = `ability-btn${this.abilityMode === 'diagonalJump' ? ' active' : ''}${used ? ' used' : ''}`;
+      btn.innerHTML = `🦘 斜向跳孢${used ? ' (已用)' : ''}`;
+      btn.disabled = used || this.isProcessing || this.gameState!.status !== 'playing';
+      btn.onclick = () => {
+        this.abilityMode = this.abilityMode === 'diagonalJump' ? 'none' : 'diagonalJump';
+        this.showMessage(
+          this.abilityMode === 'diagonalJump' ? '选择2格外的目标进行跳孢' : '已取消斜向跳孢',
+          'info'
+        );
+        this.renderPanel();
+      };
+      abilities.appendChild(btn);
+    }
+
+    if (this.gameState!.rules.allowPurifyPollution) {
+      const btn = document.createElement('button');
+      const used = this.gameState!.purifyUsed;
+      btn.className = `ability-btn${this.abilityMode === 'purify' ? ' active' : ''}${used ? ' used' : ''}`;
+      btn.innerHTML = `✨ 净化污染${used ? ' (已用)' : ''}`;
+      btn.disabled = used || this.isProcessing || this.gameState!.status !== 'playing';
+      btn.onclick = () => {
+        this.abilityMode = this.abilityMode === 'purify' ? 'none' : 'purify';
+        this.showMessage(
+          this.abilityMode === 'purify' ? '选择相邻的污染区进行净化' : '已取消净化',
+          'info'
+        );
+        this.renderPanel();
+      };
+      abilities.appendChild(btn);
+    }
+
+    section.appendChild(abilities);
+    return section;
+  }
+
   private createStatsSection(): HTMLElement {
     const section = document.createElement('div');
 
@@ -121,6 +255,16 @@ export class FungiGame {
     else if (stepsRatio <= 1.5) stepsClass = 'warning';
     else stepsClass = 'danger';
 
+    const showStepBudget = this.gameState!.rules.enableStepBudget;
+    const budgetRemaining = showStepBudget ? this.gameState!.stepBudget - this.gameState!.steps : 0;
+    let budgetClass = '';
+    if (showStepBudget) {
+      const budgetRatio = this.gameState!.steps / Math.max(1, this.gameState!.stepBudget);
+      if (budgetRatio <= 0.6) budgetClass = '';
+      else if (budgetRatio <= 0.85) budgetClass = 'warning';
+      else budgetClass = 'danger';
+    }
+
     grid.innerHTML = `
       <div class="stat-card">
         <div class="stat-label">当前步数</div>
@@ -130,6 +274,12 @@ export class FungiGame {
         <div class="stat-label">最优步数</div>
         <div class="stat-value info">${this.gameState!.optimalSteps}</div>
       </div>
+      ${showStepBudget ? `
+      <div class="stat-card">
+        <div class="stat-label">步数预算</div>
+        <div class="stat-value ${budgetClass}">${budgetRemaining}/${this.gameState!.stepBudget}</div>
+      </div>
+      ` : ''}
       <div class="stat-card">
         <div class="stat-label">营养源</div>
         <div class="stat-value">${this.gameState!.connectedNutrients.length}/${this.gameState!.nutrients.length}</div>
@@ -180,9 +330,9 @@ export class FungiGame {
     controls.appendChild(resetBtn);
 
     const newGameBtn = document.createElement('button');
-    newGameBtn.className = 'btn btn-primary';
-    newGameBtn.innerHTML = '🎮 新游戏';
-    newGameBtn.onclick = () => this.startNewGame(this.selectedLevel);
+    newGameBtn.className = 'btn btn-secondary';
+    newGameBtn.innerHTML = '⚙️ 更改规则';
+    newGameBtn.onclick = () => this.backToRules();
     controls.appendChild(newGameBtn);
 
     section.appendChild(controls);
@@ -287,9 +437,10 @@ export class FungiGame {
   private async startNewGame(level: number): Promise<void> {
     this.setProcessing(true);
     this.showMessage('正在生成新地图...', 'info');
+    this.abilityMode = 'none';
 
     try {
-      this.gameState = await createGame(level);
+      this.gameState = await createGame(level, undefined, this.gameRules);
       this.hexGrid.setGameState(this.gameState);
       this.showMessage(`第 ${level} 关开始！连接所有腐木营养源`, 'success');
       this.renderPanel();
@@ -307,8 +458,36 @@ export class FungiGame {
     const cell = this.gameState.cells[key];
     if (!cell) return;
 
+    if (this.abilityMode === 'purify') {
+      if (cell.type !== HexType.POLLUTED) {
+        this.showMessage('⚠️ 只能选择污染区进行净化！', 'error');
+        return;
+      }
+      await this.handlePurify(coord);
+      return;
+    }
+
+    if (this.abilityMode === 'diagonalJump') {
+      const lastCoord = this.gameState.myceliumCells[this.gameState.myceliumCells.length - 1];
+      const dist = hexDistance(lastCoord, coord);
+      if (dist !== 2) {
+        this.showMessage('⚠️ 斜向跳孢只能选择2格距离的目标！', 'error');
+        return;
+      }
+      if (cell.type === HexType.POLLUTED) {
+        this.showMessage('⚠️ 不能跳孢到重金属污染区！', 'error');
+        return;
+      }
+      await this.handleDiagonalJump(coord);
+      return;
+    }
+
     if (cell.type === HexType.POLLUTED) {
-      this.showMessage('⚠️ 不能蔓延到重金属污染区！', 'error');
+      if (this.gameState.rules.allowPurifyPollution && !this.gameState.purifyUsed) {
+        this.showMessage('💡 点击"净化污染"按钮后再点击污染区可净化', 'info');
+      } else {
+        this.showMessage('⚠️ 不能蔓延到重金属污染区！', 'error');
+      }
       return;
     }
 
@@ -322,6 +501,8 @@ export class FungiGame {
 
       if (this.gameState.status === 'won') {
         this.showMessage('🎊 恭喜！成功连接所有营养源！', 'success');
+      } else if (this.gameState.status === 'lost') {
+        this.showMessage('💔 步数预算已用完，游戏结束！', 'error');
       } else if (cell.type === HexType.NUTRIENT && cell.nutrientId && this.gameState.connectedNutrients.includes(cell.nutrientId)) {
         this.showMessage('✅ 成功连接一个营养源！', 'success');
       }
@@ -329,6 +510,52 @@ export class FungiGame {
       this.renderPanel();
     } catch (e) {
       this.showMessage(e instanceof Error ? e.message : '操作失败', 'error');
+    } finally {
+      this.setProcessing(false);
+    }
+  }
+
+  private async handlePurify(coord: HexCoord): Promise<void> {
+    if (!this.gameState) return;
+
+    this.setProcessing(true);
+
+    try {
+      this.gameState = await purifyPollution(this.gameState.id, coord);
+      this.hexGrid.setGameState(this.gameState);
+      this.abilityMode = 'none';
+      this.showMessage('✨ 成功净化污染区！', 'success');
+      this.renderPanel();
+    } catch (e) {
+      this.showMessage(e instanceof Error ? e.message : '净化失败', 'error');
+    } finally {
+      this.setProcessing(false);
+    }
+  }
+
+  private async handleDiagonalJump(coord: HexCoord): Promise<void> {
+    if (!this.gameState) return;
+
+    this.setProcessing(true);
+
+    try {
+      this.gameState = await diagonalJump(this.gameState.id, coord);
+      this.hexGrid.setGameState(this.gameState);
+      this.hexGrid.showPathPreview(null);
+      this.previewPathCoord = null;
+      this.abilityMode = 'none';
+
+      if (this.gameState.status === 'won') {
+        this.showMessage('🎊 恭喜！成功连接所有营养源！', 'success');
+      } else if (this.gameState.status === 'lost') {
+        this.showMessage('💔 步数预算已用完，游戏结束！', 'error');
+      } else {
+        this.showMessage('🦘 斜向跳孢成功！', 'success');
+      }
+
+      this.renderPanel();
+    } catch (e) {
+      this.showMessage(e instanceof Error ? e.message : '跳孢失败', 'error');
     } finally {
       this.setProcessing(false);
     }
@@ -406,6 +633,7 @@ export class FungiGame {
     if (!this.gameState) return;
     this.setProcessing(true);
     this.showMessage('正在重置...', 'info');
+    this.abilityMode = 'none';
 
     try {
       this.gameState = await resetGame(this.gameState.id);
@@ -418,6 +646,13 @@ export class FungiGame {
     } finally {
       this.setProcessing(false);
     }
+  }
+
+  private backToRules(): void {
+    this.gameState = null;
+    this.abilityMode = 'none';
+    this.hexGrid.clear();
+    this.renderPanel();
   }
 
   private showMessage(text: string, type: MessageType = 'info'): void {
